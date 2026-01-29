@@ -9,4 +9,5 @@ interface TokenServiceInterface
     public function refreshToken(string $token): string;
     public function getPayload(string $token): array;
     public function validateToken(string $token): bool;
+    public function authenticateWithToken(string $token): object;
 }

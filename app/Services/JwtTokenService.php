@@ -3,9 +3,9 @@
 namespace App\Services;
 
 use App\Interface\TokenServiceInterface;
-use Illuminate\Support\Facades\Log;
 use Tymon\JWTAuth\Facades\JWTAuth;
 use Tymon\JWTAuth\Exceptions\JWTException;
+use Illuminate\Support\Facades\Log;
 
 class JwtTokenService implements TokenServiceInterface
 {
@@ -20,7 +20,7 @@ class JwtTokenService implements TokenServiceInterface
     public function invalidateToken(string $token): void
     {
         try {
-            JWTAuth::invalidate(JWTAuth::setToken($token));
+            JWTAuth::setToken($token)->invalidate();
         } catch (JWTException $e) {
             Log::warning('Token invalidation failed: ' . $e->getMessage());
             throw new \Exception('Could not invalidate token', 500);
@@ -49,7 +49,7 @@ class JwtTokenService implements TokenServiceInterface
     public function validateToken(string $token): bool
     {
         try {
-            return (bool) JWTAuth::setToken($token)->check();
+            return JWTAuth::setToken($token)->check();
         } catch (JWTException $e) {
             return false;
         }
@@ -61,6 +61,22 @@ class JwtTokenService implements TokenServiceInterface
             return JWTAuth::getToken();
         } catch (JWTException $e) {
             return null;
+        }
+    }
+
+    public function authenticateWithToken(string $token): object
+    {
+        try {
+            $user = JWTAuth::setToken($token)->authenticate();
+
+            if (!$user) {
+                throw new \Exception('User not found', 401);
+            }
+
+            return $user;
+        } catch (JWTException $e) {
+            Log::error('Token authentication failed: ' . $e->getMessage());
+            throw new \Exception('Authentication failed: ' . $e->getMessage(), 401);
         }
     }
 }

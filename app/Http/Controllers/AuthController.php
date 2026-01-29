@@ -66,10 +66,20 @@ class AuthController extends Controller
 
             $cookie = $this->cookieService->createJwtCookie($result['token']);
 
-            return response()->json([
+            $response = response()->json([
                 'user' => $result['user']->toArray(),
                 'message' => 'Login successful'
-            ])->withCookie($cookie);
+            ]);
+
+            // Attach cookie to response
+            $response->withCookie($cookie);
+
+            // Add headers for CORS
+            $response->headers->set('Access-Control-Allow-Credentials', 'true');
+            $response->headers->set('Access-Control-Expose-Headers', 'Set-Cookie');
+
+            return $response;
+
         } catch (\Exception $e) {
             Log::warning('Login attempt failed: ' . $e->getMessage());
 
@@ -86,9 +96,14 @@ class AuthController extends Controller
 
             $cookie = $this->cookieService->forgetJwtCookie();
 
-            return response()->json([
+            $response = response()->json([
                 'message' => 'Logout successful'
-            ])->withCookie($cookie);
+            ]);
+
+            $response->withCookie($cookie);
+
+            return $response;
+
         } catch (\Exception $e) {
             Log::error('Logout failed: ' . $e->getMessage());
 
@@ -205,9 +220,14 @@ class AuthController extends Controller
             $newToken = $this->authService->refreshToken($token);
             $cookie = $this->cookieService->createJwtCookie($newToken);
 
-            return response()->json([
+            $response = response()->json([
                 'message' => 'Token refreshed successfully'
-            ])->withCookie($cookie);
+            ]);
+
+            $response->withCookie($cookie);
+
+            return $response;
+
         } catch (\Exception $e) {
             Log::error('Token refresh failed: ' . $e->getMessage());
 
