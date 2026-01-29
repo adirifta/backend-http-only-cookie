@@ -163,8 +163,7 @@ class AuthController extends Controller
             'password' => 'required|string|min:8|confirmed',
         ]);
 
-        // Gunakan Password broker bawaan Laravel
-        $status = Password::reset(
+        $status = Password::broker()->reset(
             $request->only('email', 'password', 'password_confirmation', 'token'),
             function (User $user, string $password) {
                 $user->forceFill([
