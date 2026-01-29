@@ -6,8 +6,9 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Tymon\JWTAuth\Contracts\JWTSubject;
 
-class User extends Authenticatable
+class User extends Authenticatable implements JWTSubject
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasFactory, Notifiable;
@@ -22,8 +23,6 @@ class User extends Authenticatable
         'email',
         'email_verification_token',
         'password',
-        'reset_password_token',
-        'reset_password_send_at',
     ];
 
     /**
@@ -34,7 +33,7 @@ class User extends Authenticatable
     protected $hidden = [
         'password',
         'remember_token',
-        'reset_password_token',
+        'email_verification_token'
     ];
 
     /**
@@ -47,7 +46,20 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
-            'reset_password_send_at' => 'datetime',
+        ];
+    }
+
+    public function getJWTIdentifier()
+    {
+        return $this->getKey();
+    }
+
+    public function getJWTCustomClaims()
+    {
+        return [
+            'name' => $this->name,
+            'email' => $this->email,
+            'email_verified_at' => $this->email_verified_at,
         ];
     }
 }

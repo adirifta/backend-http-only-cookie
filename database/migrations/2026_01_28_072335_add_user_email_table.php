@@ -13,8 +13,6 @@ return new class extends Migration
     {
         Schema::table('users', function (Blueprint $table) {
             $table->string('email_verification_token')->nullable()->after('email')->unique();
-            $table->string('reset_password_token')->nullable()->after('password')->unique();
-            $table->timestamp('reset_password_send_at')->nullable()->after('reset_password_token');
         });
     }
 
@@ -23,6 +21,8 @@ return new class extends Migration
      */
     public function down(): void
     {
-        //
+        Schema::table('users', function (Blueprint $table) {
+            $table->dropColumn('email_verification_token');
+        });
     }
 };
