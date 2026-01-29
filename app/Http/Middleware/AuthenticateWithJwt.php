@@ -2,68 +2,60 @@
 
 namespace App\Http\Middleware;
 
+use App\Interface\CookieServiceInterface;
+use App\Interface\TokenServiceInterface;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use Tymon\JWTAuth\Facades\JWTAuth;
-use Tymon\JWTAuth\Exceptions\JWTException;
-use Tymon\JWTAuth\Exceptions\TokenExpiredException;
-use Tymon\JWTAuth\Exceptions\TokenInvalidException;
+use Symfony\Component\HttpFoundation\Response;
 
 class AuthenticateWithJwt
 {
-    public function handle(Request $request, Closure $next)
+    public function __construct(
+        private TokenServiceInterface $tokenService,
+        private CookieServiceInterface $cookieService,
+    ) {}
+
+    public function handle(Request $request, Closure $next): Response
     {
+        $token = $this->cookieService->getTokenFromRequest($request);
+
+        if (!$token) {
+            Log::warning('JWT Authentication: No token provided', [
+                'path' => $request->path(),
+                'ip' => $request->ip(),
+            ]);
+
+            return response()->json([
+                'message' => 'Authentication required'
+            ], 401);
+        }
+
         try {
-            // Log untuk debugging
-            Log::info('AuthenticateWithJwt middleware called');
-
-            // Ambil token dari cookie terlebih dahulu
-            $token = $request->cookie('jwt_token');
-
-            Log::info('Token from cookie: ' . ($token ? 'exists' : 'not found'));
-
-            // Jika tidak ada di cookie, coba dari header Authorization
-            if (!$token && $request->hasHeader('Authorization')) {
-                $authHeader = $request->header('Authorization');
-                Log::info('Authorization header: ' . $authHeader);
-                $token = str_replace('Bearer ', '', $authHeader);
+            if (!$this->tokenService->validateToken($token)) {
+                throw new \Exception('Invalid token');
             }
 
-            if (!$token) {
-                Log::warning('No token found in request');
-                return response()->json(['error' => 'Token not found'], 401);
-            }
+            $payload = $this->tokenService->getPayload($token);
 
-            Log::info('Token length: ' . strlen($token));
-            Log::info('Token first 50 chars: ' . substr($token, 0, 50));
+            // You can attach user info to request if needed
+            $request->attributes->set('jwt_payload', $payload);
 
-            // Autentikasi dengan token
-            $user = JWTAuth::setToken($token)->authenticate();
+            Log::debug('JWT Authentication successful', [
+                'user_id' => $payload['sub'] ?? null,
+                'expires_at' => date('c', $payload['exp'] ?? 0),
+            ]);
 
-            if (!$user) {
-                Log::warning('User not found for token');
-                return response()->json(['error' => 'User not found'], 401);
-            }
-
-            Log::info('User authenticated: ' . $user->email);
-
-            // Attach user ke request dan auth
-            auth()->setUser($user);
-            $request->merge(['user' => $user]);
-
-        } catch (TokenExpiredException $e) {
-            Log::error('Token expired: ' . $e->getMessage());
-            return response()->json(['error' => 'Token expired'], 401);
-        } catch (TokenInvalidException $e) {
-            Log::error('Token invalid: ' . $e->getMessage());
-            return response()->json(['error' => 'Token invalid'], 401);
-        } catch (JWTException $e) {
-            Log::error('JWT Exception: ' . $e->getMessage());
-            return response()->json(['error' => 'Token error: ' . $e->getMessage()], 401);
         } catch (\Exception $e) {
-            Log::error('General exception: ' . $e->getMessage());
-            return response()->json(['error' => 'Unauthorized'], 401);
+            Log::warning('JWT Authentication failed', [
+                'error' => $e->getMessage(),
+                'token_preview' => substr($token, 0, 50),
+            ]);
+
+            return response()->json([
+                'message' => 'Authentication failed',
+                'error' => $e->getMessage(),
+            ], 401);
         }
 
         return $next($request);

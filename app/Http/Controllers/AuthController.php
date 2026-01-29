@@ -2,205 +2,230 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\User;
+use App\DTOs\LoginDTO;
+use App\DTOs\RegisterDTO;
+use App\DTOs\ResetPasswordDTO;
+use App\Interface\AuthServiceInterface;
+use App\Interface\CookieServiceInterface;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Str;
-use App\Mail\VerifyEmail;
-use App\Mail\ResetPassword;
-use Illuminate\Auth\Events\PasswordReset;
-use Tymon\JWTAuth\Facades\JWTAuth;
-use Illuminate\Support\Facades\Cookie;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Facades\Validator;
 
 class AuthController extends Controller
 {
-    public function register(Request $request)
+    public function __construct(
+        private AuthServiceInterface $authService,
+        private CookieServiceInterface $cookieService,
+    ) {}
+
+    public function register(Request $request): JsonResponse
     {
-        $request->validate([
+        $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:8|confirmed',
         ]);
 
-        $verificationToken = Str::random(60);
+        if ($validator->fails()) {
+            return response()->json([
+                'errors' => $validator->errors()
+            ], 422);
+        }
 
-        $user = User::create([
-            'name' => $request->name,
-            'email' => $request->email,
-            'password' => Hash::make($request->password),
-            'email_verification_token' => $verificationToken,
-        ]);
+        try {
+            $dto = RegisterDTO::fromRequest($request);
+            $result = $this->authService->register($dto);
 
-        Mail::to($user->email)->send(new VerifyEmail($user, $verificationToken));
+            return response()->json($result, 201);
+        } catch (\Exception $e) {
+            Log::error('Registration failed: ' . $e->getMessage());
 
-        return response()->json([
-            'message' => 'User registered successfully. Please check your email for verification.'
-        ], 201);
+            return response()->json([
+                'message' => $e->getMessage()
+            ], $e->getCode() ?: 500);
+        }
     }
 
-    public function login(Request $request)
+    public function login(Request $request): JsonResponse
     {
-        $request->validate([
+        $validator = Validator::make($request->all(), [
             'email' => 'required|string|email',
             'password' => 'required|string',
         ]);
 
-        $credentials = $request->only('email', 'password');
-
-        // Gunakan JWTAuth langsung untuk autentikasi
-        if (!$token = JWTAuth::attempt($credentials)) {
-            return response()->json(['error' => 'Invalid credentials'], 401);
+        if ($validator->fails()) {
+            return response()->json([
+                'errors' => $validator->errors()
+            ], 422);
         }
 
-        $user = User::select('id', 'name', 'email', 'email_verified_at')->where('email', $request->email)->first();
-
-        if (!$user->email_verified_at) {
-            return response()->json(['error' => 'Email not verified'], 403);
-        }
-
-        // Buat cookie HttpOnly
-        $cookie = cookie(
-            'jwt_token',
-            $token,
-            60 * 24 * 7,
-            '/',
-            null,
-            config('app.env') === 'production',
-            true,
-            false,
-            'Strict'
-        );
-
-        return response()->json([
-            'user' => $user,
-            'message' => 'Login successful'
-        ])->withCookie($cookie);
-    }
-
-    public function logout()
-    {
         try {
-            JWTAuth::invalidate(JWTAuth::getToken());
-        } catch (\Exception $e) {
-            // Log error jika ada
-            Log::error('Logout error: ' . $e->getMessage());
-        }
+            $dto = LoginDTO::fromRequest($request);
+            $result = $this->authService->login($dto);
 
-        $cookie = Cookie::forget('jwt_token');
-
-        return response()->json([
-            'message' => 'Logout successful'
-        ])->withCookie($cookie);
-    }
-
-    public function me()
-    {
-        try {
-            // Coba beberapa cara untuk mendapatkan user
-            if (auth()->check()) {
-                $user = auth()->user();
-            } elseif (JWTAuth::getToken()) {
-                $user = JWTAuth::authenticate();
-            } else {
-                return response()->json(['error' => 'Not authenticated'], 401);
-            }
-
-            if (!$user) {
-                return response()->json(['error' => 'User not found'], 404);
-            }
+            $cookie = $this->cookieService->createJwtCookie($result['token']);
 
             return response()->json([
-                'user' => [
-                    'id' => $user->id,
-                    'name' => $user->name,
-                    'email' => $user->email,
-                    'email_verified_at' => $user->email_verified_at,
-                ]
-            ]);
+                'user' => $result['user']->toArray(),
+                'message' => 'Login successful'
+            ])->withCookie($cookie);
+        } catch (\Exception $e) {
+            Log::warning('Login attempt failed: ' . $e->getMessage());
 
+            return response()->json([
+                'message' => $e->getMessage()
+            ], $e->getCode() ?: 401);
+        }
+    }
+
+    public function logout(): JsonResponse
+    {
+        try {
+            $this->authService->logout();
+
+            $cookie = $this->cookieService->forgetJwtCookie();
+
+            return response()->json([
+                'message' => 'Logout successful'
+            ])->withCookie($cookie);
+        } catch (\Exception $e) {
+            Log::error('Logout failed: ' . $e->getMessage());
+
+            return response()->json([
+                'message' => 'Logout failed'
+            ], 500);
+        }
+    }
+
+    public function me(Request $request): JsonResponse
+    {
+        $this->logRequestInfo($request);
+
+        try {
+            $user = $this->authService->getAuthenticatedUser();
+
+            return response()->json([
+                'user' => $user->toArray()
+            ]);
         } catch (\Exception $e) {
             Log::error('Me endpoint error: ' . $e->getMessage());
-            return response()->json(['error' => 'Authentication failed'], 401);
+
+            return response()->json([
+                'message' => $e->getMessage()
+            ], $e->getCode() ?: 401);
         }
     }
 
-    public function verifyEmail($token)
+    public function verifyEmail(string $token): JsonResponse
     {
-        $user = User::where('email_verification_token', $token)->first();
+        try {
+            $this->authService->verifyEmail($token);
 
-        if (!$user) {
-            return response()->json(['error' => 'Invalid verification token'], 400);
+            return response()->json([
+                'message' => 'Email verified successfully'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Email verification failed: ' . $e->getMessage());
+
+            return response()->json([
+                'message' => $e->getMessage()
+            ], $e->getCode() ?: 400);
+        }
+    }
+
+    public function forgotPassword(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'errors' => $validator->errors()
+            ], 422);
         }
 
-        $user->email_verified_at = now();
-        $user->email_verification_token = null;
-        $user->save();
+        try {
+            $status = $this->authService->requestPasswordReset($request->email);
 
-        return response()->json(['message' => 'Email verified successfully']);
+            return response()->json([
+                'message' => __($status)
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Password reset request failed: ' . $e->getMessage());
+
+            return response()->json([
+                'message' => $e->getMessage()
+            ], $e->getCode() ?: 400);
+        }
     }
 
-    public function forgotPassword(Request $request)
+    public function resetPassword(Request $request): JsonResponse
     {
-        $request->validate(['email' => 'required|email']);
-
-        $status = Password::sendResetLink(
-            $request->only('email')
-        );
-
-        return $status === Password::RESET_LINK_SENT
-            ? response()->json(['message' => __($status)], 200)
-            : response()->json(['message' => __($status)], 400);
-    }
-
-    public function resetPassword(Request $request)
-    {
-        $request->validate([
+        $validator = Validator::make($request->all(), [
             'token' => 'required',
             'email' => 'required|email',
             'password' => 'required|string|min:8|confirmed',
         ]);
 
-        $status = Password::broker()->reset(
-            $request->only('email', 'password', 'password_confirmation', 'token'),
-            function (User $user, string $password) {
-                $user->forceFill([
-                    'password' => Hash::make($password)
-                ]);
+        if ($validator->fails()) {
+            return response()->json([
+                'errors' => $validator->errors()
+            ], 422);
+        }
 
-                $user->save();
+        try {
+            $dto = ResetPasswordDTO::fromRequest($request);
+            $this->authService->resetPassword($dto);
 
-                event(new PasswordReset($user));
-            }
-        );
+            return response()->json([
+                'message' => 'Password reset successfully'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Password reset failed: ' . $e->getMessage());
 
-        return $status === Password::PASSWORD_RESET
-            ? response()->json(['message' => __($status)], 200)
-            : response()->json(['error' => __($status)], 400);
+            return response()->json([
+                'message' => $e->getMessage()
+            ], $e->getCode() ?: 400);
+        }
     }
 
-    public function refresh()
+    public function refresh(Request $request): JsonResponse
     {
         try {
-            $newToken = JWTAuth::refresh();
+            $token = $this->cookieService->getTokenFromRequest($request);
 
-            $cookie = cookie(
-                'jwt_token',
-                $newToken,
-                60 * 24 * 7,
-                '/',
-                null,
-                config('app.env') === 'production',
-                true,
-                false,
-                'Strict'
-            );
+            if (!$token) {
+                return response()->json([
+                    'message' => 'No token provided'
+                ], 401);
+            }
 
-            return response()->json(['message' => 'Token refreshed'])->withCookie($cookie);
+            $newToken = $this->authService->refreshToken($token);
+            $cookie = $this->cookieService->createJwtCookie($newToken);
+
+            return response()->json([
+                'message' => 'Token refreshed successfully'
+            ])->withCookie($cookie);
         } catch (\Exception $e) {
-            return response()->json(['error' => 'Token refresh failed: ' . $e->getMessage()], 401);
+            Log::error('Token refresh failed: ' . $e->getMessage());
+
+            return response()->json([
+                'message' => $e->getMessage()
+            ], $e->getCode() ?: 401);
+        }
+    }
+
+    private function logRequestInfo(Request $request): void
+    {
+        if (config('app.debug')) {
+            Log::debug('Auth API Request Info', [
+                'origin' => $request->header('Origin'),
+                'path' => $request->path(),
+                'has_jwt_cookie' => $request->hasCookie('jwt_token'),
+                'method' => $request->method(),
+            ]);
         }
     }
 }

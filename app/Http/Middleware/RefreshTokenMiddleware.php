@@ -2,48 +2,48 @@
 
 namespace App\Http\Middleware;
 
+use App\Interface\CookieServiceInterface;
+use App\Interface\TokenServiceInterface;
 use Closure;
 use Illuminate\Http\Request;
-use Tymon\JWTAuth\Facades\JWTAuth;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\Response;
 
 class RefreshTokenMiddleware
 {
-    public function handle(Request $request, Closure $next)
-    {
-        Log::info('Refresh Token Middleware', [
-            'path' => $request->path(),
-            'has_jwt_cookie' => $request->hasCookie('jwt_token'),
-            'cookies' => $request->cookies->all(),
-        ]);
+    public function __construct(
+        private TokenServiceInterface $tokenService,
+        private CookieServiceInterface $cookieService,
+    ) {}
 
-        // Ambil token dari cookie
-        $token = $request->cookie('jwt_token');
+    public function handle(Request $request, Closure $next): Response
+    {
+        $token = $this->cookieService->getTokenFromRequest($request);
 
         if (!$token) {
-            Log::warning('No token found for refresh attempt');
-            return response()->json(['error' => 'No token provided'], 401);
+            return response()->json([
+                'message' => 'No token provided'
+            ], 401);
         }
 
         try {
-            // Set token ke JWT
-            JWTAuth::setToken($token);
+            $payload = $this->tokenService->getPayload($token);
 
-            // Cek jika token valid (tidak expired)
-            $payload = JWTAuth::getPayload();
+            // Optional: Check if token is about to expire
+            $exp = $payload['exp'] ?? 0;
+            $timeToExpire = $exp - time();
 
-            Log::info('Token payload before refresh', [
-                'sub' => $payload->get('sub'),
-                'exp' => date('Y-m-d H:i:s', $payload->get('exp')),
-                'iat' => date('Y-m-d H:i:s', $payload->get('iat')),
-            ]);
+            if ($timeToExpire < 300) { // 5 minutes before expiration
+                Log::info('Token nearing expiration', [
+                    'expires_in' => $timeToExpire,
+                    'path' => $request->path(),
+                ]);
+            }
 
-        } catch (\Tymon\JWTAuth\Exceptions\TokenExpiredException $e) {
-            // Token expired, tapi kita masih bisa refresh
-            Log::info('Token expired but can be refreshed');
         } catch (\Exception $e) {
-            Log::error('Invalid token for refresh', ['error' => $e->getMessage()]);
-            return response()->json(['error' => 'Invalid token'], 401);
+            Log::warning('Token validation failed in refresh middleware', [
+                'error' => $e->getMessage(),
+            ]);
         }
 
         return $next($request);
