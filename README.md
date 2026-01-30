@@ -15,3 +15,4 @@ php artisan vendor:publish --provider="Tymon\JWTAuth\Providers\LaravelServicePro
 ```bash
 php artisan jwt:secret
 ```
+npm install pinia-plugin-persistedstate
