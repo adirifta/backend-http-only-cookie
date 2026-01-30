@@ -15,7 +15,7 @@ class CookieService implements CookieServiceInterface
     public function createJwtCookie(string $token): \Symfony\Component\HttpFoundation\Cookie
     {
         $isProduction = config('app.env') === 'production';
-        $domain = $isProduction ? config('app.domain') : null;
+        $domain = $isProduction ? config('app.domain', 'backend-laravel-http-only-cookie.test') : null;
 
         return cookie(
             name: self::COOKIE_NAME,
